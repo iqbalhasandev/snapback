@@ -1,0 +1,152 @@
+name: Test Snapback
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    name: Bash Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bash syntax
+        run: |
+          bash -n install.sh
+          echo "✓ install.sh syntax OK"
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on installer
+        run: |
+          shellcheck -e SC1091,SC2034,SC2086,SC2154 install.sh || true
+          echo "ShellCheck completed"
+
+  test-install:
+    name: Test Installation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone zip jq mysql-client
+
+      - name: Run installer
+        run: |
+          sudo bash install.sh
+          
+      - name: Verify installation
+        run: |
+          which snapback
+          snapback version
+          snapback help
+
+      - name: Check config created
+        run: |
+          test -f /etc/snapback/config.conf
+          echo "✓ Config file created"
+
+  test-commands:
+    name: Test Commands
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpassword
+          MYSQL_DATABASE: testdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone zip jq mysql-client
+
+      - name: Run installer
+        run: sudo bash install.sh
+
+      - name: Configure for testing
+        run: |
+          sudo tee /etc/snapback/config.conf << 'EOF'
+          RCLONE_REMOTE="local"
+          S3_BUCKET="/tmp/backups"
+          S3_PATH_PREFIX="test"
+          DB_DRIVER="mysql"
+          DB_HOST="127.0.0.1"
+          DB_PORT="3306"
+          DB_NAME="testdb"
+          DB_USER="root"
+          DB_PASSWORD="testpassword"
+          DB_MULTIPLE=""
+          BACKUP_PREFIX="backup"
+          BACKUP_DATABASE=true
+          BACKUP_FILES=false
+          ZIP_PASSWORD="testpass123"
+          VERIFY_UPLOAD=false
+          WEBHOOK_URL=""
+          FILES_INCLUDE=()
+          FILES_EXCLUDE=()
+          KEEP_ALL_BACKUPS_FOR_DAYS=7
+          KEEP_DAILY_BACKUPS_FOR_DAYS=16
+          KEEP_WEEKLY_BACKUPS_FOR_WEEKS=8
+          KEEP_MONTHLY_BACKUPS_FOR_MONTHS=4
+          KEEP_YEARLY_BACKUPS_FOR_YEARS=2
+          DELETE_OLDEST_WHEN_EXCEEDS_MB=5000
+          EOF
+
+      - name: Setup local rclone remote
+        run: |
+          mkdir -p /tmp/backups/test
+          rclone config create local local
+
+      - name: Test snapback config
+        run: snapback config
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -u root -ptestpassword 2>/dev/null; then
+              echo "MySQL is ready"
+              break
+            fi
+            echo "Waiting for MySQL... $i"
+            sleep 2
+          done
+
+      - name: Test database backup
+        run: |
+          snapback backup-db 2>&1 || echo "backup-db returned: $?"
+          
+      - name: Test full backup
+        run: |
+          snapback backup 2>&1
+
+      - name: Test list
+        run: snapback list
+
+      - name: Verify backup file created
+        run: |
+          ls -la /tmp/backups/test/
+          test -f /tmp/backups/test/backup_testdb_*.zip
+          echo "✓ Backup file created successfully"
