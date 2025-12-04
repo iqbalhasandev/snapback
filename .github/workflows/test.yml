@@ -148,5 +148,10 @@ jobs:
       - name: Verify backup file created
         run: |
           ls -la /tmp/backups/test/
-          test -f /tmp/backups/test/backup_*.zip
-          echo "✓ Backup file created successfully"
+          count=$(ls /tmp/backups/test/backup_*.zip 2>/dev/null | wc -l)
+          if [ "$count" -gt 0 ]; then
+            echo "✓ Found $count backup file(s) created successfully"
+          else
+            echo "✗ No backup files found"
+            exit 1
+          fi
