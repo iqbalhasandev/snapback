@@ -138,7 +138,8 @@ create_zip() {
 backup_mysql() {
     local db="$1" out="$2"
     log "Dumping MySQL: $db"
-    mysqldump \
+    local err_file=$(mktemp)
+    if ! mysqldump \
         --defaults-extra-file=<(printf "[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\n" "$DB_HOST" "${DB_PORT:-3306}" "$DB_USER" "$DB_PASSWORD") \
         --single-transaction \
         --routines \
@@ -146,20 +147,31 @@ backup_mysql() {
         --events \
         --set-gtid-purged=OFF \
         --no-tablespaces \
-        "$db" > "$out" 2>/dev/null
+        "$db" > "$out" 2>"$err_file"; then
+        local err_msg=$(cat "$err_file")
+        rm -f "$err_file"
+        error "MySQL dump failed for '$db': $err_msg"
+    fi
+    rm -f "$err_file"
 }
 
 # PostgreSQL dump
 backup_postgres() {
     local db="$1" out="$2"
     log "Dumping PostgreSQL: $db"
-    PGPASSWORD="$DB_PASSWORD" pg_dump \
+    local err_file=$(mktemp)
+    if ! PGPASSWORD="$DB_PASSWORD" pg_dump \
         --host="$DB_HOST" \
         --port="${DB_PORT:-5432}" \
         --username="$DB_USER" \
         --no-password \
         --format=plain \
-        "$db" > "$out" 2>/dev/null
+        "$db" > "$out" 2>"$err_file"; then
+        local err_msg=$(cat "$err_file")
+        rm -f "$err_file"
+        error "PostgreSQL dump failed for '$db': $err_msg"
+    fi
+    rm -f "$err_file"
 }
 
 # Upload via rclone with verification
