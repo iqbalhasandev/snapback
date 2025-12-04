@@ -1219,16 +1219,17 @@ do_update() {
 # Check for updates (non-interactive)
 do_check_update() {
     local latest_version
-    latest_version=$(curl -sL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
+    latest_version=$(curl -sL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//' || true)
     
     if [[ -z "$latest_version" ]]; then
-        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" 2>/dev/null | grep -m1 '^VERSION=' | cut -d'"' -f2)
+        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" 2>/dev/null | grep -m1 '^VERSION=' | cut -d'"' -f2 || true)
     fi
     
     if [[ -n "$latest_version" && "$VERSION" != "$latest_version" ]]; then
         echo "${YELLOW}Update available: v$VERSION → v$latest_version${NC}"
         echo "Run ${BLUE}snapback update${NC} to update."
     fi
+    return 0
 }
 
 show_help() {

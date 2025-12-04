@@ -1,5 +1,7 @@
 # Snapback
 
+[![Test Snapback](https://github.com/iqbalhasandev/snapback/actions/workflows/test.yml/badge.svg)](https://github.com/iqbalhasandev/snapback/actions/workflows/test.yml)
+
 Database & Files backup to S3-compatible storage with encryption and smart retention.
 
 ## Features
