@@ -419,34 +419,42 @@ do_test() {
     echo "${BLUE}Testing connections...${NC}"
 
     echo -n "rclone remote ($RCLONE_REMOTE): "
-    if rclone lsd "$RCLONE_REMOTE:" &>/dev/null; then
+    # Use rclone about or lsd with bucket for S3-compatible storage
+    if rclone lsd "$RCLONE_REMOTE:" &>/dev/null || rclone lsd "$RCLONE_REMOTE:$S3_BUCKET" &>/dev/null; then
         echo "${GREEN}OK${NC}"
     else
         echo "${RED}FAILED${NC}"
     fi
 
-    echo -n "S3 bucket: "
+    echo -n "S3 bucket ($S3_BUCKET): "
     if rclone lsd "$RCLONE_REMOTE:$S3_BUCKET" &>/dev/null; then
         echo "${GREEN}OK${NC}"
     else
-        echo "${RED}FAILED (bucket may not exist)${NC}"
+        # Try to check if bucket exists by listing (some providers don't support lsd on root)
+        if rclone ls "$RCLONE_REMOTE:$S3_BUCKET" --max-depth 1 &>/dev/null; then
+            echo "${GREEN}OK${NC}"
+        else
+            echo "${RED}FAILED (bucket may not exist or no access)${NC}"
+        fi
     fi
 
-    echo -n "Database ($DB_DRIVER): "
-    case "$DB_DRIVER" in
-        mysql|mariadb)
-            if mysqladmin ping -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" -p"$DB_PASSWORD" --silent &>/dev/null; then
-                echo "${GREEN}OK${NC}"
-            else
-                echo "${RED}FAILED${NC}"
-            fi ;;
-        postgresql|postgres)
-            if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -c '\q' &>/dev/null; then
-                echo "${GREEN}OK${NC}"
-            else
-                echo "${RED}FAILED${NC}"
-            fi ;;
-    esac
+    if [[ "$BACKUP_DATABASE" == "true" && "$DB_DRIVER" != "none" ]]; then
+        echo -n "Database ($DB_DRIVER): "
+        case "$DB_DRIVER" in
+            mysql|mariadb)
+                if mysqladmin ping -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" -p"$DB_PASSWORD" --silent &>/dev/null; then
+                    echo "${GREEN}OK${NC}"
+                else
+                    echo "${RED}FAILED${NC}"
+                fi ;;
+            postgresql|postgres)
+                if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -c '\q' &>/dev/null; then
+                    echo "${GREEN}OK${NC}"
+                else
+                    echo "${RED}FAILED${NC}"
+                fi ;;
+        esac
+    fi
 }
 
 # Setup cron
