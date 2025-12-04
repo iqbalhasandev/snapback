@@ -144,20 +144,32 @@ backup_mysql() {
     local db="$1" out="$2"
     log "Dumping MySQL: $db"
     local err_file=$(mktemp)
-    if ! mysqldump \
-        --defaults-extra-file=<(printf "[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\n" "$DB_HOST" "${DB_PORT:-3306}" "$DB_USER" "$DB_PASSWORD") \
-        --single-transaction \
-        --routines \
-        --triggers \
-        --events \
-        --set-gtid-purged=OFF \
-        --no-tablespaces \
-        "$db" > "$out" 2>"$err_file"; then
+    local creds_file=$(mktemp)
+    chmod 600 "$creds_file"
+    
+    # Write credentials to temp file (more compatible than process substitution)
+    printf "[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\n" \
+        "$DB_HOST" "${DB_PORT:-3306}" "$DB_USER" "$DB_PASSWORD" > "$creds_file"
+    
+    # Build mysqldump options (compatible with MySQL/MariaDB)
+    local opts=(
+        --defaults-extra-file="$creds_file"
+        --single-transaction
+        --routines
+        --triggers
+    )
+    
+    # Add optional flags only if supported
+    mysqldump --help 2>/dev/null | grep -q "\-\-events" && opts+=(--events)
+    mysqldump --help 2>/dev/null | grep -q "\-\-set-gtid-purged" && opts+=(--set-gtid-purged=OFF)
+    mysqldump --help 2>/dev/null | grep -q "\-\-no-tablespaces" && opts+=(--no-tablespaces)
+    
+    if ! mysqldump "${opts[@]}" "$db" > "$out" 2>"$err_file"; then
         local err_msg=$(cat "$err_file")
-        rm -f "$err_file"
+        rm -f "$err_file" "$creds_file"
         error "MySQL dump failed for '$db': $err_msg"
     fi
-    rm -f "$err_file"
+    rm -f "$err_file" "$creds_file"
 }
 
 # PostgreSQL dump
@@ -306,13 +318,27 @@ do_backup_all() {
     send_webhook "success" "Backup completed in ${duration}s"
 }
 
+# Human readable size
+human_size() {
+    local bytes=$1
+    if [[ $bytes -ge 1073741824 ]]; then
+        printf "%.1fG" $(echo "scale=1; $bytes/1073741824" | bc)
+    elif [[ $bytes -ge 1048576 ]]; then
+        printf "%.1fM" $(echo "scale=1; $bytes/1048576" | bc)
+    elif [[ $bytes -ge 1024 ]]; then
+        printf "%.1fK" $(echo "scale=1; $bytes/1024" | bc)
+    else
+        printf "%dB" $bytes
+    fi
+}
+
 # List backups
 do_list() {
     load_config
     echo "${BLUE}Backups in: $REMOTE_PATH${NC}"
     echo "─────────────────────────────────────────────────────"
     rclone ls "$REMOTE_PATH/" 2>/dev/null | while read -r sz name; do
-        local szh=$(numfmt --to=iec $sz 2>/dev/null || echo "${sz}B")
+        local szh=$(human_size $sz)
         printf "  %8s  %s\n" "$szh" "$name"
     done
     echo "─────────────────────────────────────────────────────"
@@ -578,13 +604,17 @@ do_configure() {
         s3_region="${s3_region:-us-east-1}"
         read -p "Endpoint (leave empty for AWS): " s3_endpoint
         
-        # Create rclone remote
+        # Create rclone remote (add no_check_bucket for non-AWS providers)
+        local s3_extra=""
+        [[ "$s3_provider" != "AWS" ]] && s3_extra="no_check_bucket=true"
+        
         rclone config create "$RCLONE_REMOTE" s3 \
             provider="$s3_provider" \
             access_key_id="$s3_access_key" \
             secret_access_key="$s3_secret_key" \
             region="$s3_region" \
             ${s3_endpoint:+endpoint="$s3_endpoint"} \
+            ${s3_extra:+$s3_extra} \
             acl=private 2>/dev/null
         
         echo -e "${GREEN}✓ rclone remote '$RCLONE_REMOTE' configured${NC}"
@@ -914,12 +944,17 @@ do_setup_rclone() {
     read -p "Region [us-east-1]: " region; region="${region:-us-east-1}"
     read -p "Endpoint (leave empty for AWS): " endpoint
 
+    # Add no_check_bucket for S3-compatible storage (DigitalOcean, Minio, etc.)
+    local extra_opts=""
+    [[ "$provider" != "AWS" ]] && extra_opts="no_check_bucket=true"
+    
     rclone config create "$rname" s3 \
         provider="$provider" \
         access_key_id="$access_key" \
         secret_access_key="$secret_key" \
         region="$region" \
         ${endpoint:+endpoint="$endpoint"} \
+        ${extra_opts:+$extra_opts} \
         acl=private
 
     echo "${GREEN}✓ rclone remote '$rname' created${NC}"
