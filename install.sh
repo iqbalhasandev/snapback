@@ -490,6 +490,46 @@ do_configure() {
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     
+    # rclone remote name
+    local default_remote="${RCLONE_REMOTE:-s3backup}"
+    read -p "rclone remote name [$default_remote]: " input_remote
+    RCLONE_REMOTE="${input_remote:-$default_remote}"
+    
+    # Check if rclone remote exists
+    local setup_rclone="n"
+    if rclone listremotes 2>/dev/null | grep -q "^${RCLONE_REMOTE}:$"; then
+        echo -e "${GREEN}✓ rclone remote '$RCLONE_REMOTE' already configured${NC}"
+        read -p "Reconfigure rclone credentials? (y/N): " setup_rclone
+    else
+        echo -e "${YELLOW}rclone remote '$RCLONE_REMOTE' not found${NC}"
+        setup_rclone="y"
+    fi
+    
+    # Setup rclone if needed
+    if [[ "$setup_rclone" == "y" || "$setup_rclone" == "Y" ]]; then
+        echo ""
+        echo -e "${CYAN}Enter your S3 credentials:${NC}"
+        read -p "S3 Provider (AWS/Minio/DigitalOcean/Other) [AWS]: " s3_provider
+        s3_provider="${s3_provider:-AWS}"
+        read -p "Access Key ID: " s3_access_key
+        read -sp "Secret Access Key: " s3_secret_key; echo ""
+        read -p "Region [us-east-1]: " s3_region
+        s3_region="${s3_region:-us-east-1}"
+        read -p "Endpoint (leave empty for AWS): " s3_endpoint
+        
+        # Create rclone remote
+        rclone config create "$RCLONE_REMOTE" s3 \
+            provider="$s3_provider" \
+            access_key_id="$s3_access_key" \
+            secret_access_key="$s3_secret_key" \
+            region="$s3_region" \
+            ${s3_endpoint:+endpoint="$s3_endpoint"} \
+            acl=private 2>/dev/null
+        
+        echo -e "${GREEN}✓ rclone remote '$RCLONE_REMOTE' configured${NC}"
+    fi
+    
+    echo ""
     # S3 Bucket
     local default_bucket="${S3_BUCKET:-your-bucket-name}"
     read -p "S3 Bucket name [$default_bucket]: " input_bucket
@@ -777,19 +817,22 @@ GENCONFIG
     echo -e "${GREEN}Configuration Summary${NC}"
     echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
     echo ""
+    echo -e "  rclone Remote:  ${BLUE}$RCLONE_REMOTE${NC}"
     echo -e "  S3 Bucket:      ${BLUE}$S3_BUCKET${NC}"
     echo -e "  S3 Path:        ${BLUE}$S3_PATH_PREFIX${NC}"
-    echo -e "  Database:       ${BLUE}$DB_DRIVER${NC} @ ${BLUE}$DB_HOST:$DB_PORT${NC}"
-    [[ -n "$DB_MULTIPLE" ]] && echo -e "  Databases:      ${BLUE}$DB_MULTIPLE${NC}" || echo -e "  Database:       ${BLUE}$DB_NAME${NC}"
+    if [[ "$BACKUP_DATABASE" == "true" ]]; then
+        echo -e "  Database:       ${BLUE}$DB_DRIVER${NC} @ ${BLUE}$DB_HOST:$DB_PORT${NC}"
+        [[ -n "$DB_MULTIPLE" ]] && echo -e "  Databases:      ${BLUE}$DB_MULTIPLE${NC}" || echo -e "  Database:       ${BLUE}$DB_NAME${NC}"
+    fi
     echo -e "  Backup DB:      ${BLUE}$BACKUP_DATABASE${NC}"
     echo -e "  Backup Files:   ${BLUE}$BACKUP_FILES${NC}"
     [[ -n "$ZIP_PASSWORD" ]] && echo -e "  Encryption:     ${GREEN}Enabled${NC}" || echo -e "  Encryption:     ${YELLOW}Disabled${NC}"
     [[ -n "$WEBHOOK_URL" ]] && echo -e "  Notifications:  ${GREEN}Enabled${NC}" || echo -e "  Notifications:  ${YELLOW}Disabled${NC}"
     echo ""
     echo -e "${YELLOW}Next Steps:${NC}"
-    echo -e "  1. Setup rclone:  ${GREEN}snapback setup-rclone${NC}"
-    echo -e "  2. Test config:   ${GREEN}snapback test${NC}"
-    echo -e "  3. Run backup:    ${GREEN}snapback backup${NC}"
+    echo -e "  1. Test config:   ${GREEN}snapback test${NC}"
+    echo -e "  2. Run backup:    ${GREEN}snapback backup${NC}"
+    echo -e "  3. Setup cron:    ${GREEN}snapback cron${NC}"
     echo ""
 }
 
@@ -797,8 +840,13 @@ GENCONFIG
 do_setup_rclone() {
     echo "${BLUE}Setting up rclone for S3...${NC}"
     echo ""
+    
+    # Load current config to get default remote name
+    local current_remote="s3backup"
+    [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" 2>/dev/null && current_remote="${RCLONE_REMOTE:-s3backup}"
+    
     echo "Enter your S3 credentials:"
-    read -p "Remote name [s3backup]: " rname; rname="${rname:-s3backup}"
+    read -p "Remote name [$current_remote]: " rname; rname="${rname:-$current_remote}"
     read -p "S3 Provider (AWS/Minio/DigitalOcean/Other) [AWS]: " provider; provider="${provider:-AWS}"
     read -p "Access Key ID: " access_key
     read -sp "Secret Access Key: " secret_key; echo ""
@@ -814,7 +862,18 @@ do_setup_rclone() {
         acl=private
 
     echo "${GREEN}✓ rclone remote '$rname' created${NC}"
-    echo "Update RCLONE_REMOTE in config: $(basename "$0") edit"
+    
+    # Update config file with new remote name if it changed
+    if [[ -f "$CONFIG_FILE" ]]; then
+        if grep -q "^RCLONE_REMOTE=" "$CONFIG_FILE"; then
+            sed -i.bak "s/^RCLONE_REMOTE=.*/RCLONE_REMOTE=\"$rname\"/" "$CONFIG_FILE"
+            rm -f "${CONFIG_FILE}.bak"
+            echo "${GREEN}✓ Config updated: RCLONE_REMOTE=\"$rname\"${NC}"
+        fi
+    fi
+    
+    echo ""
+    echo "Test your connection: snapback test"
 }
 
 # Init config
