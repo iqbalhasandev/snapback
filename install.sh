@@ -1400,5 +1400,8 @@ echo "  # macOS"
 echo "  brew install rclone zip jq mysql-client"
 echo ""
 
-[[ "$INSTALL_DIR" == "$HOME/bin" && ":$PATH:" != *":$HOME/bin:"* ]] && \
+if [[ "$INSTALL_DIR" == "$HOME/bin" && ":$PATH:" != *":$HOME/bin:"* ]]; then
     echo -e "${YELLOW}Add to PATH: export PATH=\"\$HOME/bin:\$PATH\"${NC}"
+fi
+
+exit 0
