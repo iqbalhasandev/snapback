@@ -668,14 +668,58 @@ do_configure() {
     # Setup rclone if needed
     if [[ "$setup_rclone" == "y" || "$setup_rclone" == "Y" ]]; then
         echo ""
-        echo -e "${CYAN}Enter your S3 credentials:${NC}"
-        read -p "S3 Provider (AWS/Minio/DigitalOcean/Other) [AWS]: " s3_provider
-        s3_provider="${s3_provider:-AWS}"
+        echo -e "${CYAN}Select S3 Provider:${NC}"
+        echo -e "  ${CYAN}1)${NC} AWS S3"
+        echo -e "  ${CYAN}2)${NC} DigitalOcean Spaces"
+        echo -e "  ${CYAN}3)${NC} Minio"
+        echo -e "  ${CYAN}4)${NC} Backblaze B2"
+        echo -e "  ${CYAN}5)${NC} Cloudflare R2"
+        echo -e "  ${CYAN}6)${NC} Wasabi"
+        echo -e "  ${CYAN}7)${NC} Other (custom)"
+        echo ""
+        read -p "Choose [1-7] [1]: " provider_choice
+        provider_choice="${provider_choice:-1}"
+        
+        local s3_provider s3_endpoint_default=""
+        case "$provider_choice" in
+            1) s3_provider="AWS"; s3_endpoint_default="" ;;
+            2) s3_provider="DigitalOcean"; s3_endpoint_default="sgp1.digitaloceanspaces.com" ;;
+            3) s3_provider="Minio"; s3_endpoint_default="localhost:9000" ;;
+            4) s3_provider="Backblaze"; s3_endpoint_default="" ;;
+            5) s3_provider="Cloudflare"; s3_endpoint_default="" ;;
+            6) s3_provider="Wasabi"; s3_endpoint_default="s3.wasabisys.com" ;;
+            7) 
+                read -p "Enter provider name: " s3_provider
+                s3_provider="${s3_provider:-Other}"
+                ;;
+            *) s3_provider="AWS"; s3_endpoint_default="" ;;
+        esac
+        
+        echo ""
+        echo -e "${CYAN}Enter your $s3_provider credentials:${NC}"
         read -p "Access Key ID: " s3_access_key
         read -sp "Secret Access Key: " s3_secret_key; echo ""
-        read -p "Region [us-east-1]: " s3_region
-        s3_region="${s3_region:-us-east-1}"
-        read -p "Endpoint (leave empty for AWS): " s3_endpoint
+        
+        # Region with smart defaults
+        local default_region="us-east-1"
+        [[ "$s3_provider" == "DigitalOcean" ]] && default_region="sgp1"
+        [[ "$s3_provider" == "Wasabi" ]] && default_region="us-east-1"
+        read -p "Region [$default_region]: " s3_region
+        s3_region="${s3_region:-$default_region}"
+        
+        # Endpoint (auto-generate for known providers)
+        if [[ "$s3_provider" == "AWS" ]]; then
+            s3_endpoint=""
+        elif [[ "$s3_provider" == "DigitalOcean" ]]; then
+            s3_endpoint="${s3_region}.digitaloceanspaces.com"
+            echo -e "  Endpoint: ${BLUE}$s3_endpoint${NC}"
+        elif [[ "$s3_provider" == "Wasabi" ]]; then
+            s3_endpoint="s3.${s3_region}.wasabisys.com"
+            echo -e "  Endpoint: ${BLUE}$s3_endpoint${NC}"
+        else
+            read -p "Endpoint [$s3_endpoint_default]: " s3_endpoint
+            s3_endpoint="${s3_endpoint:-$s3_endpoint_default}"
+        fi
         
         # Create rclone remote (add no_check_bucket for non-AWS providers)
         local s3_extra=""
@@ -1009,13 +1053,63 @@ do_setup_rclone() {
     local current_remote="s3backup"
     [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" 2>/dev/null && current_remote="${RCLONE_REMOTE:-s3backup}"
     
-    echo "Enter your S3 credentials:"
-    read -p "Remote name [$current_remote]: " rname; rname="${rname:-$current_remote}"
-    read -p "S3 Provider (AWS/Minio/DigitalOcean/Other) [AWS]: " provider; provider="${provider:-AWS}"
+    read -p "Remote name [$current_remote]: " rname
+    rname="${rname:-$current_remote}"
+    
+    echo ""
+    echo -e "${CYAN}Select S3 Provider:${NC}"
+    echo -e "  ${CYAN}1)${NC} AWS S3"
+    echo -e "  ${CYAN}2)${NC} DigitalOcean Spaces"
+    echo -e "  ${CYAN}3)${NC} Minio"
+    echo -e "  ${CYAN}4)${NC} Backblaze B2"
+    echo -e "  ${CYAN}5)${NC} Cloudflare R2"
+    echo -e "  ${CYAN}6)${NC} Wasabi"
+    echo -e "  ${CYAN}7)${NC} Other (custom)"
+    echo ""
+    read -p "Choose [1-7] [1]: " provider_choice
+    provider_choice="${provider_choice:-1}"
+    
+    local provider endpoint_default=""
+    case "$provider_choice" in
+        1) provider="AWS"; endpoint_default="" ;;
+        2) provider="DigitalOcean"; endpoint_default="sgp1.digitaloceanspaces.com" ;;
+        3) provider="Minio"; endpoint_default="localhost:9000" ;;
+        4) provider="Backblaze"; endpoint_default="" ;;
+        5) provider="Cloudflare"; endpoint_default="" ;;
+        6) provider="Wasabi"; endpoint_default="s3.wasabisys.com" ;;
+        7) 
+            read -p "Enter provider name: " provider
+            provider="${provider:-Other}"
+            ;;
+        *) provider="AWS"; endpoint_default="" ;;
+    esac
+    
+    echo ""
+    echo -e "${CYAN}Enter your $provider credentials:${NC}"
     read -p "Access Key ID: " access_key
     read -sp "Secret Access Key: " secret_key; echo ""
-    read -p "Region [us-east-1]: " region; region="${region:-us-east-1}"
-    read -p "Endpoint (leave empty for AWS): " endpoint
+    
+    # Region with smart defaults
+    local default_region="us-east-1"
+    [[ "$provider" == "DigitalOcean" ]] && default_region="sgp1"
+    [[ "$provider" == "Wasabi" ]] && default_region="us-east-1"
+    read -p "Region [$default_region]: " region
+    region="${region:-$default_region}"
+    
+    # Endpoint (auto-generate for known providers)
+    local endpoint=""
+    if [[ "$provider" == "AWS" ]]; then
+        endpoint=""
+    elif [[ "$provider" == "DigitalOcean" ]]; then
+        endpoint="${region}.digitaloceanspaces.com"
+        echo -e "  Endpoint: ${BLUE}$endpoint${NC}"
+    elif [[ "$provider" == "Wasabi" ]]; then
+        endpoint="s3.${region}.wasabisys.com"
+        echo -e "  Endpoint: ${BLUE}$endpoint${NC}"
+    else
+        read -p "Endpoint [$endpoint_default]: " endpoint
+        endpoint="${endpoint:-$endpoint_default}"
+    fi
 
     # Add no_check_bucket for S3-compatible storage (DigitalOcean, Minio, etc.)
     local extra_opts=""
@@ -1030,14 +1124,14 @@ do_setup_rclone() {
         ${extra_opts:+$extra_opts} \
         acl=private
 
-    echo "${GREEN}✓ rclone remote '$rname' created${NC}"
+    echo -e "${GREEN}✓ rclone remote '$rname' created${NC}"
     
     # Update config file with new remote name if it changed
     if [[ -f "$CONFIG_FILE" ]]; then
         if grep -q "^RCLONE_REMOTE=" "$CONFIG_FILE"; then
             sed -i.bak "s/^RCLONE_REMOTE=.*/RCLONE_REMOTE=\"$rname\"/" "$CONFIG_FILE"
             rm -f "${CONFIG_FILE}.bak"
-            echo "${GREEN}✓ Config updated: RCLONE_REMOTE=\"$rname\"${NC}"
+            echo -e "${GREEN}✓ Config updated: RCLONE_REMOTE=\"$rname\"${NC}"
         fi
     fi
     
