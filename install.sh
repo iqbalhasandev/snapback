@@ -72,6 +72,11 @@ warn() { echo "${YELLOW}[WARN] $1${NC}"; }
 
 # Lock file to prevent concurrent runs
 acquire_lock() {
+    # Check if flock is available
+    if ! command -v flock &>/dev/null; then
+        warn "flock not available, skipping lock"
+        return 0
+    fi
     exec 200>"$LOCKFILE"
     if ! flock -n 200; then
         echo "${RED}Another backup is already running${NC}" >&2
@@ -278,8 +283,16 @@ do_backup_all() {
     log "Starting Snapback v$VERSION..."
     local start_time=$(date +%s)
     
-    [[ "$BACKUP_DATABASE" != "false" ]] && do_backup_db
-    [[ "$BACKUP_FILES" == "true" ]] && do_backup_files
+    if [[ "$BACKUP_DATABASE" != "false" ]]; then
+        log "Starting database backup..."
+        do_backup_db || error "Database backup failed"
+    fi
+    
+    if [[ "$BACKUP_FILES" == "true" ]]; then
+        log "Starting files backup..."
+        do_backup_files || error "Files backup failed"
+    fi
+    
     do_cleanup
     
     local end_time=$(date +%s)
