@@ -260,6 +260,7 @@ do_backup_files() {
 
 # Full backup + cleanup
 do_backup_all() {
+    load_config
     acquire_lock
     log "═══════════════════════════════════════"
     log "Starting Snapback v$VERSION..."
