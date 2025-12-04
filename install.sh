@@ -228,13 +228,11 @@ upload() {
     fi
 }
 
-# Database backup
-do_backup_db() {
-    load_config; check_deps
-    local ts=$(date '+%Y-%m-%d_%H%M%S')
-    local tmp=$(mktemp -d)
-    CLEANUP_DIRS+=("$tmp")
-
+# Dump databases to a folder (internal helper)
+_dump_databases() {
+    local dest_dir="$1"
+    mkdir -p "$dest_dir"
+    
     local dbs=()
     if [[ -n "$DB_MULTIPLE" ]]; then
         IFS=',' read -ra dbs <<< "$DB_MULTIPLE"
@@ -244,78 +242,131 @@ do_backup_db() {
 
     for db in "${dbs[@]}"; do
         db=$(echo "$db" | xargs)
-        local sql="$tmp/${db}.sql"
-        local zipf="$tmp/${BACKUP_PREFIX:-backup}_${db}_${ts}.zip"
-
+        [[ -z "$db" ]] && continue
+        local sql="$dest_dir/${db}.sql"
+        
         case "$DB_DRIVER" in
             mysql|mariadb) backup_mysql "$db" "$sql" ;;
             postgresql|postgres) backup_postgres "$db" "$sql" ;;
             *) error "Unsupported: $DB_DRIVER" ;;
         esac
-
-        log "Compressing with password protection..."
-        create_zip "$sql" "$zipf"
-        rm -f "$sql"
-
-        local sz=$(du -h "$zipf" | cut -f1)
-        log "Size: $sz (encrypted)"
-        upload "$zipf"
     done
+    return 0
+}
+
+# Archive files to a folder (internal helper)
+_archive_files() {
+    local dest_dir="$1"
+    mkdir -p "$dest_dir"
+    
+    local excludes=()
+    for ex in "${FILES_EXCLUDE[@]}"; do excludes+=("--exclude=$ex"); done
+
+    local tar_opts="-cf"
+    [[ "${FOLLOW_SYMLINKS:-false}" == "true" ]] && tar_opts="-chf"
+    tar $tar_opts "$dest_dir/files.tar" "${excludes[@]}" "${FILES_INCLUDE[@]}" 2>/dev/null || true
+    return 0
+}
+
+# Database backup (standalone command)
+do_backup_db() {
+    load_config; check_deps
+    local ts=$(date '+%Y-%m-%d_%H%M%S')
+    local tmp=$(mktemp -d)
+    CLEANUP_DIRS+=("$tmp")
+    
+    local backup_dir="$tmp/backup"
+    mkdir -p "$backup_dir/Databases"
+    
+    log "Dumping databases..."
+    _dump_databases "$backup_dir/Databases"
+    
+    local zipf="$tmp/${BACKUP_PREFIX:-backup}_db_${ts}.zip"
+    log "Compressing with password protection..."
+    
+    # Create zip with folder structure
+    (cd "$backup_dir" && zip -q -r ${ZIP_PASSWORD:+-P "$ZIP_PASSWORD"} "$zipf" Databases/)
+    
+    local sz=$(du -h "$zipf" | cut -f1)
+    log "Size: $sz (encrypted)"
+    upload "$zipf"
     log "✓ Database backup done!"
 }
 
-# Files backup
+# Files backup (standalone command)
 do_backup_files() {
     load_config; check_deps
     local ts=$(date '+%Y-%m-%d_%H%M%S')
     local tmp=$(mktemp -d)
     CLEANUP_DIRS+=("$tmp")
-
-    local tarf="$tmp/files_${ts}.tar"
-    local zipf="$tmp/${BACKUP_PREFIX:-backup}_files_${ts}.zip"
-
-    local excludes=()
-    for ex in "${FILES_EXCLUDE[@]}"; do excludes+=("--exclude=$ex"); done
-
+    
+    local backup_dir="$tmp/backup"
+    mkdir -p "$backup_dir/Files"
+    
     log "Archiving files..."
-    local tar_opts="-cf"
-    [[ "${FOLLOW_SYMLINKS:-false}" == "true" ]] && tar_opts="-chf"
-    tar $tar_opts "$tarf" "${excludes[@]}" "${FILES_INCLUDE[@]}" 2>/dev/null || true
-
+    _archive_files "$backup_dir/Files"
+    
+    local zipf="$tmp/${BACKUP_PREFIX:-backup}_files_${ts}.zip"
     log "Compressing with password protection..."
-    create_zip "$tarf" "$zipf"
-    rm -f "$tarf"
-
+    
+    # Create zip with folder structure
+    (cd "$backup_dir" && zip -q -r ${ZIP_PASSWORD:+-P "$ZIP_PASSWORD"} "$zipf" Files/)
+    
     local sz=$(du -h "$zipf" | cut -f1)
     log "Size: $sz (encrypted)"
     upload "$zipf"
     log "✓ Files backup done!"
 }
 
-# Full backup + cleanup
+# Full backup - creates ONE zip with Databases/ and Files/ folders
 do_backup_all() {
     load_config
     acquire_lock
+    check_deps
     log "═══════════════════════════════════════"
     log "Starting Snapback v$VERSION..."
     local start_time=$(date +%s)
     
+    local ts=$(date '+%Y-%m-%d_%H%M%S')
+    local tmp=$(mktemp -d)
+    CLEANUP_DIRS+=("$tmp")
+    
+    local backup_dir="$tmp/backup"
+    mkdir -p "$backup_dir"
+    
+    # Dump databases to Databases/ folder
     if [[ "$BACKUP_DATABASE" != "false" ]]; then
-        log "Starting database backup..."
-        do_backup_db || error "Database backup failed"
+        log "Dumping databases..."
+        mkdir -p "$backup_dir/Databases"
+        _dump_databases "$backup_dir/Databases"
+        log "✓ Databases dumped"
     fi
     
+    # Archive files to Files/ folder
     if [[ "$BACKUP_FILES" == "true" ]]; then
-        log "Starting files backup..."
-        do_backup_files || error "Files backup failed"
+        log "Archiving files..."
+        mkdir -p "$backup_dir/Files"
+        _archive_files "$backup_dir/Files"
+        log "✓ Files archived"
     fi
+    
+    # Create single zip with both folders
+    local zipf="$tmp/${BACKUP_PREFIX:-backup}_${ts}.zip"
+    log "Creating backup archive..."
+    (cd "$backup_dir" && zip -q -r ${ZIP_PASSWORD:+-P "$ZIP_PASSWORD"} "$zipf" .)
+    
+    local sz=$(du -h "$zipf" | cut -f1)
+    log "Size: $sz (encrypted)"
+    
+    # Upload single backup file
+    upload "$zipf"
     
     do_cleanup
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     log "═══════════════════════════════════════"
-    log "✓ All backups completed in ${duration}s!"
+    log "✓ Backup completed in ${duration}s!"
     send_webhook "success" "Backup completed in ${duration}s"
 }
 
