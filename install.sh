@@ -1136,9 +1136,14 @@ MAINSCRIPT
 
 chmod +x "$INSTALL_DIR/$BACKUP_CMD"
 
-echo -e "${GREEN}[2/4]${NC} Creating default config..."
+echo -e "${GREEN}[2/4]${NC} Checking config..."
 
-cat > "$CONFIG_DIR/config.conf" << 'DEFCONFIG'
+# Only create default config if it doesn't exist
+if [[ -f "$CONFIG_DIR/config.conf" ]]; then
+    echo -e "${YELLOW}Existing config found, preserving: $CONFIG_DIR/config.conf${NC}"
+else
+    echo -e "${GREEN}Creating default config...${NC}"
+    cat > "$CONFIG_DIR/config.conf" << 'DEFCONFIG'
 # =============================================================================
 # Snapback Configuration
 # =============================================================================
@@ -1196,6 +1201,7 @@ KEEP_MONTHLY_BACKUPS_FOR_MONTHS=4
 KEEP_YEARLY_BACKUPS_FOR_YEARS=2
 DELETE_OLDEST_WHEN_EXCEEDS_MB=5000
 DEFCONFIG
+fi
 
 echo -e "${GREEN}[3/4]${NC} Checking dependencies..."
 
