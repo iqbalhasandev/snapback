@@ -223,7 +223,11 @@ do_backup_db() {
     CLEANUP_DIRS+=("$tmp")
 
     local dbs=()
-    [[ -n "$DB_MULTIPLE" ]] && IFS=',' read -ra dbs <<< "$DB_MULTIPLE" || dbs=("$DB_NAME")
+    if [[ -n "$DB_MULTIPLE" ]]; then
+        IFS=',' read -ra dbs <<< "$DB_MULTIPLE"
+    else
+        dbs=("$DB_NAME")
+    fi
 
     for db in "${dbs[@]}"; do
         db=$(echo "$db" | xargs)
