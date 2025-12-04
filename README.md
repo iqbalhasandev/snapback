@@ -99,6 +99,25 @@ apt install postgresql-client  # or: brew install postgresql
 | Root | `/etc/snapback/config.conf` |
 | User | `~/.snapback/config.conf` |
 
+## Uninstall
+
+```bash
+# As root (system-wide installation)
+sudo rm -f /usr/local/bin/snapback
+sudo rm -rf /etc/snapback
+sudo rm -f /var/log/snapback.log
+
+# As user (local installation)
+rm -f ~/bin/snapback
+rm -rf ~/.snapback
+
+# Remove cron job (if configured)
+crontab -l | grep -v snapback | crontab -
+
+# Remove rclone remote (optional)
+rclone config delete s3backup
+```
+
 ## S3 Providers
 
 Works with any S3-compatible storage:
