@@ -55,17 +55,17 @@ else
     echo "Error: Config not found. Run: $0 init"; exit 1
 fi
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'; NC=$'\033[0m'
 
-log() { local m="[$(date '+%Y-%m-%d %H:%M:%S')] $1"; echo -e "${GREEN}$m${NC}"; echo "$m" >> "$LOG_FILE" 2>/dev/null || true; }
-error() { local m="$1"; echo -e "${RED}[ERROR] $m${NC}" >&2; echo "[ERROR] $m" >> "$LOG_FILE" 2>/dev/null || true; send_webhook "failure" "$m"; exit 1; }
-warn() { echo -e "${YELLOW}[WARN] $1${NC}"; }
+log() { local m="[$(date '+%Y-%m-%d %H:%M:%S')] $1"; echo "${GREEN}$m${NC}"; echo "$m" >> "$LOG_FILE" 2>/dev/null || true; }
+error() { local m="$1"; echo "${RED}[ERROR] $m${NC}" >&2; echo "[ERROR] $m" >> "$LOG_FILE" 2>/dev/null || true; send_webhook "failure" "$m"; exit 1; }
+warn() { echo "${YELLOW}[WARN] $1${NC}"; }
 
 # Lock file to prevent concurrent runs
 acquire_lock() {
     exec 200>"$LOCKFILE"
     if ! flock -n 200; then
-        echo -e "${RED}Another backup is already running${NC}" >&2
+        echo "${RED}Another backup is already running${NC}" >&2
         exit 1
     fi
 }
@@ -254,7 +254,7 @@ do_backup_all() {
 # List backups
 do_list() {
     load_config
-    echo -e "${BLUE}Backups in: $REMOTE_PATH${NC}"
+    echo "${BLUE}Backups in: $REMOTE_PATH${NC}"
     echo "─────────────────────────────────────────────────────"
     rclone ls "$REMOTE_PATH/" 2>/dev/null | while read -r sz name; do
         local szh=$(numfmt --to=iec $sz 2>/dev/null || echo "${sz}B")
@@ -414,35 +414,35 @@ do_restore() {
 # Test connections
 do_test() {
     load_config
-    echo -e "${BLUE}Testing connections...${NC}"
+    echo "${BLUE}Testing connections...${NC}"
 
     echo -n "rclone remote ($RCLONE_REMOTE): "
     if rclone lsd "$RCLONE_REMOTE:" &>/dev/null; then
-        echo -e "${GREEN}OK${NC}"
+        echo "${GREEN}OK${NC}"
     else
-        echo -e "${RED}FAILED${NC}"
+        echo "${RED}FAILED${NC}"
     fi
 
     echo -n "S3 bucket: "
     if rclone lsd "$RCLONE_REMOTE:$S3_BUCKET" &>/dev/null; then
-        echo -e "${GREEN}OK${NC}"
+        echo "${GREEN}OK${NC}"
     else
-        echo -e "${RED}FAILED (bucket may not exist)${NC}"
+        echo "${RED}FAILED (bucket may not exist)${NC}"
     fi
 
     echo -n "Database ($DB_DRIVER): "
     case "$DB_DRIVER" in
         mysql|mariadb)
             if mysqladmin ping -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" -p"$DB_PASSWORD" --silent &>/dev/null; then
-                echo -e "${GREEN}OK${NC}"
+                echo "${GREEN}OK${NC}"
             else
-                echo -e "${RED}FAILED${NC}"
+                echo "${RED}FAILED${NC}"
             fi ;;
         postgresql|postgres)
             if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -c '\q' &>/dev/null; then
-                echo -e "${GREEN}OK${NC}"
+                echo "${GREEN}OK${NC}"
             else
-                echo -e "${RED}FAILED${NC}"
+                echo "${RED}FAILED${NC}"
             fi ;;
     esac
 }
@@ -453,17 +453,17 @@ do_cron() {
     local cmd="$(realpath "$0") backup"
     (crontab -l 2>/dev/null | grep -v "s3backup") | crontab - 2>/dev/null || true
     (crontab -l 2>/dev/null; echo "$sched $cmd >> $LOG_FILE 2>&1") | crontab -
-    echo -e "${GREEN}✓ Cron added: $sched${NC}"
+    echo "${GREEN}✓ Cron added: $sched${NC}"
     crontab -l 2>/dev/null | grep s3backup || true
 }
 
 # Config commands
-do_config() { echo -e "${BLUE}$CONFIG_FILE${NC}"; cat "$CONFIG_FILE"; }
+do_config() { echo "${BLUE}$CONFIG_FILE${NC}"; cat "$CONFIG_FILE"; }
 do_edit() { ${EDITOR:-nano} "$CONFIG_FILE"; }
 
 # Setup rclone
 do_setup_rclone() {
-    echo -e "${BLUE}Setting up rclone for S3...${NC}"
+    echo "${BLUE}Setting up rclone for S3...${NC}"
     echo ""
     echo "Enter your S3 credentials:"
     read -p "Remote name [s3backup]: " rname; rname="${rname:-s3backup}"
@@ -481,7 +481,7 @@ do_setup_rclone() {
         ${endpoint:+endpoint="$endpoint"} \
         acl=private
 
-    echo -e "${GREEN}✓ rclone remote '$rname' created${NC}"
+    echo "${GREEN}✓ rclone remote '$rname' created${NC}"
     echo "Update RCLONE_REMOTE in config: $(basename "$0") edit"
 }
 
@@ -552,13 +552,13 @@ KEEP_YEARLY_BACKUPS_FOR_YEARS=2              # Keep Jan 1st
 DELETE_OLDEST_WHEN_EXCEEDS_MB=5000           # Max storage in MB
 DEFCONF
 
-    echo -e "${GREEN}✓ Config: $cdir/config.conf${NC}"
+    echo "${GREEN}✓ Config: $cdir/config.conf${NC}"
     echo "Next: $(basename "$0") setup-rclone && $(basename "$0") edit"
 }
 
 # Self-update from GitHub
 do_update() {
-    echo -e "${BLUE}Checking for updates...${NC}"
+    echo "${BLUE}Checking for updates...${NC}"
     
     # Get latest version from GitHub
     local latest_version
@@ -570,16 +570,16 @@ do_update() {
     fi
     
     if [[ -z "$latest_version" ]]; then
-        echo -e "${RED}Failed to check for updates. Please check your internet connection.${NC}"
+        echo "${RED}Failed to check for updates. Please check your internet connection.${NC}"
         exit 1
     fi
     
-    echo -e "Current version: ${YELLOW}v$VERSION${NC}"
-    echo -e "Latest version:  ${GREEN}v$latest_version${NC}"
+    echo "Current version: ${YELLOW}v$VERSION${NC}"
+    echo "Latest version:  ${GREEN}v$latest_version${NC}"
     
     # Compare versions
     if [[ "$VERSION" == "$latest_version" ]]; then
-        echo -e "${GREEN}✓ You are already running the latest version!${NC}"
+        echo "${GREEN}✓ You are already running the latest version!${NC}"
         exit 0
     fi
     
@@ -587,7 +587,7 @@ do_update() {
     read -p "Update to v$latest_version? (y/N): " confirm
     [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Update cancelled."; exit 0; }
     
-    echo -e "${BLUE}Downloading latest version...${NC}"
+    echo "${BLUE}Downloading latest version...${NC}"
     
     local tmp_script
     tmp_script=$(mktemp)
@@ -597,20 +597,20 @@ do_update() {
     if ! curl -sL "https://github.com/$GITHUB_REPO/releases/latest/download/snapback" -o "$tmp_script" 2>/dev/null; then
         # Fallback to raw main branch
         curl -sL "$GITHUB_RAW/main/install.sh" -o "$tmp_script" || {
-            echo -e "${RED}Failed to download update.${NC}"
+            echo "${RED}Failed to download update.${NC}"
             exit 1
         }
     fi
     
     # Verify download
     if [[ ! -s "$tmp_script" ]]; then
-        echo -e "${RED}Downloaded file is empty. Update failed.${NC}"
+        echo "${RED}Downloaded file is empty. Update failed.${NC}"
         exit 1
     fi
     
     # Check if it's a valid bash script
     if ! head -1 "$tmp_script" | grep -q '^#!/bin/bash'; then
-        echo -e "${RED}Invalid script downloaded. Update failed.${NC}"
+        echo "${RED}Invalid script downloaded. Update failed.${NC}"
         exit 1
     fi
     
@@ -620,7 +620,7 @@ do_update() {
     
     # Check write permission
     if [[ ! -w "$script_path" ]]; then
-        echo -e "${YELLOW}Root permission required to update $script_path${NC}"
+        echo "${YELLOW}Root permission required to update $script_path${NC}"
         sudo cp "$tmp_script" "$script_path"
         sudo chmod +x "$script_path"
     else
@@ -628,8 +628,8 @@ do_update() {
         chmod +x "$script_path"
     fi
     
-    echo -e "${GREEN}✓ Updated to v$latest_version successfully!${NC}"
-    echo -e "Run ${BLUE}snapback version${NC} to verify."
+    echo "${GREEN}✓ Updated to v$latest_version successfully!${NC}"
+    echo "Run ${BLUE}snapback version${NC} to verify."
 }
 
 # Check for updates (non-interactive)
@@ -642,49 +642,47 @@ do_check_update() {
     fi
     
     if [[ -n "$latest_version" && "$VERSION" != "$latest_version" ]]; then
-        echo -e "${YELLOW}Update available: v$VERSION → v$latest_version${NC}"
-        echo -e "Run ${BLUE}snapback update${NC} to update."
+        echo "${YELLOW}Update available: v$VERSION → v$latest_version${NC}"
+        echo "Run ${BLUE}snapback update${NC} to update."
     fi
 }
 
 show_help() {
-    cat << EOF
-${BLUE}Snapback v$VERSION - Database & Files Backup Tool${NC}
-${BLUE}https://github.com/$GITHUB_REPO${NC}
-
-${GREEN}COMMANDS:${NC}
-  backup           Full backup (db + files)
-  backup-db        Database backup only
-  backup-files     Files backup only
-  list             List backups in S3
-  download <file>  Download backup
-  restore <file>   Restore database
-  cleanup          Apply retention policy
-  test             Test connections
-  config           Show config
-  edit             Edit config
-  cron [schedule]  Setup cron (default: 0 2 * * *)
-  setup-rclone     Interactive rclone setup
-  init             Create default config
-  update           Update to latest version
-  version          Show version
-
-${GREEN}EXAMPLES:${NC}
-  $(basename "$0") backup                    # Run backup
-  $(basename "$0") list                      # List backups
-  $(basename "$0") download backup_db.zip    # Download
-  $(basename "$0") restore backup_db.zip     # Restore
-  $(basename "$0") cron "0 */6 * * *"        # Every 6 hours
-  $(basename "$0") update                    # Update to latest
-
-${GREEN}DEPENDENCIES:${NC}
-  ${YELLOW}Required:${NC} rclone, zip, jq, curl
-  ${YELLOW}MySQL:${NC}    mysql-client (apt) or mysql (brew)
-  ${YELLOW}Postgres:${NC} postgresql-client (apt) or postgresql (brew)
-
-${GREEN}CONFIG:${NC} $CONFIG_FILE
-${GREEN}GITHUB:${NC} https://github.com/$GITHUB_REPO
-EOF
+    echo "${BLUE}Snapback v$VERSION - Database & Files Backup Tool${NC}"
+    echo "${BLUE}https://github.com/$GITHUB_REPO${NC}"
+    echo ""
+    echo "${GREEN}COMMANDS:${NC}"
+    echo "  backup           Full backup (db + files)"
+    echo "  backup-db        Database backup only"
+    echo "  backup-files     Files backup only"
+    echo "  list             List backups in S3"
+    echo "  download <file>  Download backup"
+    echo "  restore <file>   Restore database"
+    echo "  cleanup          Apply retention policy"
+    echo "  test             Test connections"
+    echo "  config           Show config"
+    echo "  edit             Edit config"
+    echo "  cron [schedule]  Setup cron (default: 0 2 * * *)"
+    echo "  setup-rclone     Interactive rclone setup"
+    echo "  init             Create default config"
+    echo "  update           Update to latest version"
+    echo "  version          Show version"
+    echo ""
+    echo "${GREEN}EXAMPLES:${NC}"
+    echo "  snapback backup                    # Run backup"
+    echo "  snapback list                      # List backups"
+    echo "  snapback download backup_db.zip    # Download"
+    echo "  snapback restore backup_db.zip     # Restore"
+    echo "  snapback cron \"0 */6 * * *\"        # Every 6 hours"
+    echo "  snapback update                    # Update to latest"
+    echo ""
+    echo "${GREEN}DEPENDENCIES:${NC}"
+    echo "  ${YELLOW}Required:${NC} rclone, zip, jq, curl"
+    echo "  ${YELLOW}MySQL:${NC}    mysql-client (apt) or mysql (brew)"
+    echo "  ${YELLOW}Postgres:${NC} postgresql-client (apt) or postgresql (brew)"
+    echo ""
+    echo "${GREEN}CONFIG:${NC} $CONFIG_FILE"
+    echo "${GREEN}GITHUB:${NC} https://github.com/$GITHUB_REPO"
 }
 
 do_version() {
