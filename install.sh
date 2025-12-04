@@ -221,7 +221,9 @@ do_backup_files() {
     for ex in "${FILES_EXCLUDE[@]}"; do excludes+=("--exclude=$ex"); done
 
     log "Archiving files..."
-    tar -cf "$tarf" "${excludes[@]}" "${FILES_INCLUDE[@]}" 2>/dev/null || true
+    local tar_opts="-cf"
+    [[ "${FOLLOW_SYMLINKS:-false}" == "true" ]] && tar_opts="-chf"
+    tar $tar_opts "$tarf" "${excludes[@]}" "${FILES_INCLUDE[@]}" 2>/dev/null || true
 
     log "Compressing with password protection..."
     create_zip "$tarf" "$zipf"
@@ -461,6 +463,336 @@ do_cron() {
 do_config() { echo "${BLUE}$CONFIG_FILE${NC}"; cat "$CONFIG_FILE"; }
 do_edit() { ${EDITOR:-nano} "$CONFIG_FILE"; }
 
+# Interactive configuration wizard
+do_configure() {
+    local cdir
+    [[ $EUID -eq 0 ]] && cdir="/etc/snapback" || cdir="$HOME/.snapback"
+    mkdir -p "$cdir" "$cdir/logs" 2>/dev/null || true
+    
+    echo -e "${CYAN}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║           Snapback Configuration Wizard                       ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    
+    # Check for existing config
+    if [[ -f "$cdir/config.conf" ]]; then
+        echo -e "${YELLOW}Existing configuration found at: $cdir/config.conf${NC}"
+        read -p "Do you want to reconfigure? (y/N): " reconfigure
+        [[ "$reconfigure" != "y" && "$reconfigure" != "Y" ]] && { echo "Configuration cancelled."; exit 0; }
+        # Load existing values as defaults
+        source "$cdir/config.conf" 2>/dev/null || true
+    fi
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  S3 Storage Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # S3 Bucket
+    local default_bucket="${S3_BUCKET:-your-bucket-name}"
+    read -p "S3 Bucket name [$default_bucket]: " input_bucket
+    S3_BUCKET="${input_bucket:-$default_bucket}"
+    
+    # S3 Path Prefix
+    local default_prefix="${S3_PATH_PREFIX:-Backups/my-server}"
+    read -p "S3 Path prefix [$default_prefix]: " input_prefix
+    S3_PATH_PREFIX="${input_prefix:-$default_prefix}"
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Database Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # DB Driver selection
+    echo "Select database driver:"
+    echo -e "  ${CYAN}1)${NC} mysql"
+    echo -e "  ${CYAN}2)${NC} mariadb"
+    echo -e "  ${CYAN}3)${NC} postgresql"
+    echo -e "  ${CYAN}4)${NC} none (skip database backup)"
+    
+    local default_driver_num=1
+    case "${DB_DRIVER:-mysql}" in
+        mysql) default_driver_num=1 ;;
+        mariadb) default_driver_num=2 ;;
+        postgresql|postgres) default_driver_num=3 ;;
+        none) default_driver_num=4 ;;
+    esac
+    
+    read -p "Choose [1-4] [$default_driver_num]: " driver_choice
+    driver_choice="${driver_choice:-$default_driver_num}"
+    
+    local BACKUP_DATABASE="true"
+    case "$driver_choice" in
+        1) DB_DRIVER="mysql" ;;
+        2) DB_DRIVER="mariadb" ;;
+        3) DB_DRIVER="postgresql" ;;
+        4) DB_DRIVER="none"; BACKUP_DATABASE="false" ;;
+        *) DB_DRIVER="mysql" ;;
+    esac
+    
+    if [[ "$BACKUP_DATABASE" == "true" ]]; then
+        # Set default port based on driver
+        local default_port="3306"
+        [[ "$DB_DRIVER" == "postgresql" ]] && default_port="5432"
+        
+        # DB Host
+        local default_host="${DB_HOST:-localhost}"
+        read -p "Database host [$default_host]: " input_host
+        DB_HOST="${input_host:-$default_host}"
+        
+        # DB Port
+        local current_port="${DB_PORT:-$default_port}"
+        read -p "Database port [$current_port]: " input_port
+        DB_PORT="${input_port:-$current_port}"
+        
+        # DB User
+        local default_user="${DB_USER:-root}"
+        read -p "Database username [$default_user]: " input_user
+        DB_USER="${input_user:-$default_user}"
+        
+        # DB Password
+        echo -n "Database password: "
+        read -s input_db_pass
+        echo ""
+        DB_PASSWORD="${input_db_pass:-$DB_PASSWORD}"
+        
+        # Multiple databases
+        echo ""
+        echo -e "${YELLOW}Enter database names to backup (comma-separated, or single name):${NC}"
+        echo -e "  Example: ${CYAN}mydb${NC} or ${CYAN}db1,db2,db3${NC}"
+        local default_dbs="${DB_MULTIPLE:-${DB_NAME:-}}"
+        read -p "Databases [$default_dbs]: " input_dbs
+        input_dbs="${input_dbs:-$default_dbs}"
+        
+        # Parse databases
+        if [[ "$input_dbs" == *","* ]]; then
+            DB_MULTIPLE="$input_dbs"
+            DB_NAME=$(echo "$input_dbs" | cut -d',' -f1 | xargs)
+        else
+            DB_NAME="$input_dbs"
+            DB_MULTIPLE=""
+        fi
+    fi
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Security Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # ZIP Password
+    echo -e "${YELLOW}Set a password for backup encryption (leave empty for no encryption):${NC}"
+    echo -n "Backup encryption password: "
+    read -s input_zip_pass
+    echo ""
+    ZIP_PASSWORD="${input_zip_pass:-$ZIP_PASSWORD}"
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Notification Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # Webhook URL
+    echo -e "${YELLOW}Enter webhook URL for notifications (Slack, Discord, or custom):${NC}"
+    echo -e "  Leave empty to disable notifications"
+    local default_webhook="${WEBHOOK_URL:-}"
+    read -p "Webhook URL [$default_webhook]: " input_webhook
+    WEBHOOK_URL="${input_webhook:-$default_webhook}"
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  File Backup Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # Enable file backup?
+    read -p "Enable file backup? (y/N): " enable_files
+    local BACKUP_FILES="false"
+    local FILES_INCLUDE_STR=""
+    local FILES_EXCLUDE_STR=""
+    local FOLLOW_SYMLINKS="false"
+    
+    if [[ "$enable_files" == "y" || "$enable_files" == "Y" ]]; then
+        BACKUP_FILES="true"
+        
+        # Files to include
+        echo ""
+        echo -e "${YELLOW}Enter paths to include in backup (comma-separated):${NC}"
+        echo -e "  Example: ${CYAN}/var/www/html,/home/user/data${NC}"
+        local default_include="/var/www/html"
+        read -p "Include paths [$default_include]: " input_include
+        FILES_INCLUDE_STR="${input_include:-$default_include}"
+        
+        # Files to exclude
+        echo ""
+        echo -e "${YELLOW}Enter paths to exclude from backup (comma-separated):${NC}"
+        echo -e "  Example: ${CYAN}vendor,node_modules,.git,storage${NC}"
+        local default_exclude="vendor,node_modules,.git,storage"
+        read -p "Exclude patterns [$default_exclude]: " input_exclude
+        FILES_EXCLUDE_STR="${input_exclude:-$default_exclude}"
+        
+        # Follow symlinks
+        echo ""
+        read -p "Follow symbolic links? (y/N): " follow_sym
+        [[ "$follow_sym" == "y" || "$follow_sym" == "Y" ]] && FOLLOW_SYMLINKS="true"
+    fi
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Retention Policy Configuration${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}Configure how long to keep backups:${NC}"
+    echo ""
+    
+    # Keep all backups for X days
+    local default_keep_all="${KEEP_ALL_BACKUPS_FOR_DAYS:-7}"
+    read -p "Keep ALL backups for how many days? [$default_keep_all]: " input_keep_all
+    KEEP_ALL_BACKUPS_FOR_DAYS="${input_keep_all:-$default_keep_all}"
+    
+    # Keep daily backups for X days
+    local default_keep_daily="${KEEP_DAILY_BACKUPS_FOR_DAYS:-16}"
+    read -p "Keep DAILY backups for how many days? [$default_keep_daily]: " input_keep_daily
+    KEEP_DAILY_BACKUPS_FOR_DAYS="${input_keep_daily:-$default_keep_daily}"
+    
+    # Keep weekly backups for X weeks
+    local default_keep_weekly="${KEEP_WEEKLY_BACKUPS_FOR_WEEKS:-8}"
+    read -p "Keep WEEKLY backups for how many weeks? [$default_keep_weekly]: " input_keep_weekly
+    KEEP_WEEKLY_BACKUPS_FOR_WEEKS="${input_keep_weekly:-$default_keep_weekly}"
+    
+    # Keep monthly backups for X months
+    local default_keep_monthly="${KEEP_MONTHLY_BACKUPS_FOR_MONTHS:-4}"
+    read -p "Keep MONTHLY backups for how many months? [$default_keep_monthly]: " input_keep_monthly
+    KEEP_MONTHLY_BACKUPS_FOR_MONTHS="${input_keep_monthly:-$default_keep_monthly}"
+    
+    # Keep yearly backups for X years
+    local default_keep_yearly="${KEEP_YEARLY_BACKUPS_FOR_YEARS:-2}"
+    read -p "Keep YEARLY backups for how many years? [$default_keep_yearly]: " input_keep_yearly
+    KEEP_YEARLY_BACKUPS_FOR_YEARS="${input_keep_yearly:-$default_keep_yearly}"
+    
+    # Max storage size
+    local default_max_mb="${DELETE_OLDEST_WHEN_EXCEEDS_MB:-5000}"
+    read -p "Maximum storage size in MB (oldest deleted when exceeded) [$default_max_mb]: " input_max_mb
+    DELETE_OLDEST_WHEN_EXCEEDS_MB="${input_max_mb:-$default_max_mb}"
+    
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Generating Configuration...${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # Generate FILES_INCLUDE array
+    local files_include_array=""
+    if [[ -n "$FILES_INCLUDE_STR" ]]; then
+        IFS=',' read -ra paths <<< "$FILES_INCLUDE_STR"
+        for path in "${paths[@]}"; do
+            path=$(echo "$path" | xargs)  # trim whitespace
+            files_include_array+="    \"$path\"\n"
+        done
+    else
+        files_include_array="    \"/var/www/html\"\n"
+    fi
+    
+    # Generate FILES_EXCLUDE array
+    local files_exclude_array=""
+    if [[ -n "$FILES_EXCLUDE_STR" ]]; then
+        IFS=',' read -ra patterns <<< "$FILES_EXCLUDE_STR"
+        for pattern in "${patterns[@]}"; do
+            pattern=$(echo "$pattern" | xargs)  # trim whitespace
+            # Add full path if it looks like a relative pattern
+            if [[ "$pattern" != /* ]]; then
+                files_exclude_array+="    \"*/$pattern\"\n"
+            else
+                files_exclude_array+="    \"$pattern\"\n"
+            fi
+        done
+    else
+        files_exclude_array="    \"*/vendor\"\n    \"*/node_modules\"\n    \"*/storage\"\n    \"*/.git\"\n"
+    fi
+    
+    # Write config file
+    cat > "$cdir/config.conf" << GENCONFIG
+# =============================================================================
+# Snapback Configuration
+# Generated by: snapback configure
+# Generated at: $(date '+%Y-%m-%d %H:%M:%S')
+# =============================================================================
+
+# rclone Remote Name (run: snapback setup-rclone)
+RCLONE_REMOTE="${RCLONE_REMOTE:-s3backup}"
+
+# S3 Bucket & Path
+S3_BUCKET="$S3_BUCKET"
+S3_PATH_PREFIX="$S3_PATH_PREFIX"
+
+# Database Settings
+DB_DRIVER="$DB_DRIVER"
+DB_HOST="$DB_HOST"
+DB_PORT="$DB_PORT"
+DB_NAME="$DB_NAME"
+DB_USER="$DB_USER"
+DB_PASSWORD="$DB_PASSWORD"
+DB_MULTIPLE="$DB_MULTIPLE"
+
+# Backup Settings
+BACKUP_PREFIX="backup"
+BACKUP_DATABASE=$BACKUP_DATABASE
+BACKUP_FILES=$BACKUP_FILES
+
+# ZIP Password Protection (leave empty for no password)
+ZIP_PASSWORD="$ZIP_PASSWORD"
+
+# Upload Verification
+VERIFY_UPLOAD=true
+
+# Follow Symbolic Links (for file backup)
+FOLLOW_SYMLINKS=$FOLLOW_SYMLINKS
+
+# Webhook Notifications
+WEBHOOK_URL="$WEBHOOK_URL"
+
+# File Backup Paths (if BACKUP_FILES=true)
+FILES_INCLUDE=(
+$(echo -e "$files_include_array"))
+FILES_EXCLUDE=(
+$(echo -e "$files_exclude_array"))
+
+# Retention Policy
+KEEP_ALL_BACKUPS_FOR_DAYS=$KEEP_ALL_BACKUPS_FOR_DAYS
+KEEP_DAILY_BACKUPS_FOR_DAYS=$KEEP_DAILY_BACKUPS_FOR_DAYS
+KEEP_WEEKLY_BACKUPS_FOR_WEEKS=$KEEP_WEEKLY_BACKUPS_FOR_WEEKS
+KEEP_MONTHLY_BACKUPS_FOR_MONTHS=$KEEP_MONTHLY_BACKUPS_FOR_MONTHS
+KEEP_YEARLY_BACKUPS_FOR_YEARS=$KEEP_YEARLY_BACKUPS_FOR_YEARS
+DELETE_OLDEST_WHEN_EXCEEDS_MB=$DELETE_OLDEST_WHEN_EXCEEDS_MB
+GENCONFIG
+    
+    echo -e "${GREEN}✓ Configuration saved to: $cdir/config.conf${NC}"
+    echo ""
+    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Configuration Summary${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  S3 Bucket:      ${BLUE}$S3_BUCKET${NC}"
+    echo -e "  S3 Path:        ${BLUE}$S3_PATH_PREFIX${NC}"
+    echo -e "  Database:       ${BLUE}$DB_DRIVER${NC} @ ${BLUE}$DB_HOST:$DB_PORT${NC}"
+    [[ -n "$DB_MULTIPLE" ]] && echo -e "  Databases:      ${BLUE}$DB_MULTIPLE${NC}" || echo -e "  Database:       ${BLUE}$DB_NAME${NC}"
+    echo -e "  Backup DB:      ${BLUE}$BACKUP_DATABASE${NC}"
+    echo -e "  Backup Files:   ${BLUE}$BACKUP_FILES${NC}"
+    [[ -n "$ZIP_PASSWORD" ]] && echo -e "  Encryption:     ${GREEN}Enabled${NC}" || echo -e "  Encryption:     ${YELLOW}Disabled${NC}"
+    [[ -n "$WEBHOOK_URL" ]] && echo -e "  Notifications:  ${GREEN}Enabled${NC}" || echo -e "  Notifications:  ${YELLOW}Disabled${NC}"
+    echo ""
+    echo -e "${YELLOW}Next Steps:${NC}"
+    echo -e "  1. Setup rclone:  ${GREEN}snapback setup-rclone${NC}"
+    echo -e "  2. Test config:   ${GREEN}snapback test${NC}"
+    echo -e "  3. Run backup:    ${GREEN}snapback backup${NC}"
+    echo ""
+}
+
 # Setup rclone
 do_setup_rclone() {
     echo "${BLUE}Setting up rclone for S3...${NC}"
@@ -661,6 +993,7 @@ show_help() {
     echo "  cleanup          Apply retention policy"
     echo "  test             Test connections"
     echo "  config           Show config"
+    echo "  configure        Interactive configuration wizard"
     echo "  edit             Edit config"
     echo "  cron [schedule]  Setup cron (default: 0 2 * * *)"
     echo "  setup-rclone     Interactive rclone setup"
@@ -669,6 +1002,7 @@ show_help() {
     echo "  version          Show version"
     echo ""
     echo "${GREEN}EXAMPLES:${NC}"
+    echo "  snapback configure                 # Interactive setup wizard"
     echo "  snapback backup                    # Run backup"
     echo "  snapback list                      # List backups"
     echo "  snapback download backup_db.zip    # Download"
@@ -701,6 +1035,7 @@ case "${1:-help}" in
     cleanup|clean) load_config; do_cleanup ;;
     test) do_test ;;
     config|show) do_config ;;
+    configure) do_configure ;;
     edit) do_edit ;;
     cron) do_cron "$2" ;;
     setup-rclone) do_setup_rclone ;;
@@ -793,8 +1128,8 @@ echo -e "Config:  ${BLUE}$CONFIG_DIR/config.conf${NC}"
 echo -e "Command: ${BLUE}$BACKUP_CMD${NC}"
 echo ""
 echo -e "${YELLOW}Quick Start:${NC}"
-echo -e "  1. Setup rclone:  ${GREEN}$BACKUP_CMD setup-rclone${NC}"
-echo -e "  2. Edit config:   ${GREEN}$BACKUP_CMD edit${NC}"
+echo -e "  1. Configure:     ${GREEN}$BACKUP_CMD configure${NC}  (interactive wizard)"
+echo -e "  2. Setup rclone:  ${GREEN}$BACKUP_CMD setup-rclone${NC}"
 echo -e "  3. Test:          ${GREEN}$BACKUP_CMD test${NC}"
 echo -e "  4. Run backup:    ${GREEN}$BACKUP_CMD backup${NC}"
 echo -e "  5. Setup cron:    ${GREEN}$BACKUP_CMD cron${NC}"
