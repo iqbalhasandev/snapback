@@ -127,6 +127,7 @@ check_deps() {
         postgresql|postgres) command -v pg_dump &>/dev/null || m+=("postgresql-client (apt) or postgresql (brew)") ;;
     esac
     [[ ${#m[@]} -gt 0 ]] && error "Missing: ${m[*]}"
+    return 0
 }
 
 # Create password-protected zip
