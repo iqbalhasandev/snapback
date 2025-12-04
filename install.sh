@@ -43,6 +43,15 @@ VERSION="1.0.0"
 GITHUB_REPO="iqbalhasandev/snapback"
 GITHUB_RAW="https://raw.githubusercontent.com/$GITHUB_REPO"
 LOCKFILE="/tmp/snapback.lock"
+CLEANUP_DIRS=()
+
+# Cleanup function
+cleanup_on_exit() {
+    for dir in "${CLEANUP_DIRS[@]}"; do
+        [[ -d "$dir" ]] && rm -rf "$dir"
+    done
+}
+trap cleanup_on_exit EXIT
 
 # Config detection
 if [[ -f "/etc/snapback/config.conf" ]]; then
@@ -55,7 +64,7 @@ else
     echo "Error: Config not found. Run: $0 init"; exit 1
 fi
 
-RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'; NC=$'\033[0m'
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'; CYAN=$'\033[0;36m'; NC=$'\033[0m'
 
 log() { local m="[$(date '+%Y-%m-%d %H:%M:%S')] $1"; echo "${GREEN}$m${NC}"; echo "$m" >> "$LOG_FILE" 2>/dev/null || true; }
 error() { local m="$1"; echo "${RED}[ERROR] $m${NC}" >&2; echo "[ERROR] $m" >> "$LOG_FILE" 2>/dev/null || true; send_webhook "failure" "$m"; exit 1; }
@@ -159,17 +168,31 @@ upload() {
     local fname=$(basename "$file")
     local dest="$REMOTE_PATH/$fname"
     log "Uploading: $dest"
-    rclone copy "$file" "$REMOTE_PATH/" --progress=false -q
+    
+    if ! rclone copy "$file" "$REMOTE_PATH/" --progress=false -q; then
+        error "Upload failed for $fname"
+    fi
     
     # Verify upload integrity
     if [[ "${VERIFY_UPLOAD:-true}" == "true" ]]; then
         log "Verifying upload integrity..."
         local local_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
-        local remote_size=$(rclone size "$REMOTE_PATH/$fname" --json 2>/dev/null | jq -r '.bytes // 0')
-        if [[ "$local_size" != "$remote_size" ]]; then
-            error "Upload verification failed: size mismatch (local: $local_size, remote: $remote_size)"
+        local remote_info=$(rclone size "$REMOTE_PATH/$fname" --json 2>/dev/null)
+        
+        if [[ -z "$remote_info" ]]; then
+            warn "Could not verify upload (rclone size failed), checking file exists..."
+            if rclone ls "$REMOTE_PATH/$fname" &>/dev/null; then
+                log "✓ File exists in remote: $fname"
+            else
+                error "Upload verification failed: file not found in remote"
+            fi
+        else
+            local remote_size=$(echo "$remote_info" | jq -r '.bytes // 0')
+            if [[ "$local_size" != "$remote_size" ]]; then
+                error "Upload verification failed: size mismatch (local: $local_size, remote: $remote_size)"
+            fi
+            log "✓ Verified: $fname ($local_size bytes)"
         fi
-        log "✓ Verified: $fname ($local_size bytes)"
     else
         log "✓ Upload complete: $fname"
     fi
@@ -180,7 +203,7 @@ do_backup_db() {
     load_config; check_deps
     local ts=$(date '+%Y-%m-%d_%H%M%S')
     local tmp=$(mktemp -d)
-    trap "rm -rf $tmp" EXIT
+    CLEANUP_DIRS+=("$tmp")
 
     local dbs=()
     [[ -n "$DB_MULTIPLE" ]] && IFS=',' read -ra dbs <<< "$DB_MULTIPLE" || dbs=("$DB_NAME")
@@ -212,7 +235,7 @@ do_backup_files() {
     load_config; check_deps
     local ts=$(date '+%Y-%m-%d_%H%M%S')
     local tmp=$(mktemp -d)
-    trap "rm -rf $tmp" EXIT
+    CLEANUP_DIRS+=("$tmp")
 
     local tarf="$tmp/files_${ts}.tar"
     local zipf="$tmp/${BACKUP_PREFIX:-backup}_files_${ts}.zip"
@@ -389,7 +412,7 @@ do_restore() {
     [[ "$c" != "yes" ]] && { echo "Cancelled"; exit 0; }
 
     local tmp=$(mktemp -d)
-    trap "rm -rf $tmp" EXIT
+    CLEANUP_DIRS+=("$tmp")
 
     log "Extracting..."
     if [[ -n "$ZIP_PASSWORD" ]]; then
@@ -460,11 +483,11 @@ do_test() {
 # Setup cron
 do_cron() {
     local sched="${1:-0 2 * * *}"
-    local cmd="$(realpath "$0") backup"
-    (crontab -l 2>/dev/null | grep -v "s3backup") | crontab - 2>/dev/null || true
+    local cmd="$(command -v snapback || realpath "$0") backup"
+    (crontab -l 2>/dev/null | grep -v "snapback") | crontab - 2>/dev/null || true
     (crontab -l 2>/dev/null; echo "$sched $cmd >> $LOG_FILE 2>&1") | crontab -
     echo "${GREEN}✓ Cron added: $sched${NC}"
-    crontab -l 2>/dev/null | grep s3backup || true
+    crontab -l 2>/dev/null | grep snapback || true
 }
 
 # Config commands
@@ -988,32 +1011,35 @@ do_update() {
     
     echo "${BLUE}Downloading latest version...${NC}"
     
-    local tmp_installer
+    local tmp_installer tmp_script
     tmp_installer=$(mktemp)
-    trap "rm -f $tmp_installer" EXIT
+    tmp_script=$(mktemp)
+    
+    # Cleanup function for update
+    cleanup_update() { rm -f "$tmp_installer" "$tmp_script"; }
     
     # Download installer from GitHub
     curl -sL "$GITHUB_RAW/main/install.sh" -o "$tmp_installer" || {
         echo "${RED}Failed to download update.${NC}"
+        cleanup_update
         exit 1
     }
     
     # Verify download
     if [[ ! -s "$tmp_installer" ]]; then
         echo "${RED}Downloaded file is empty. Update failed.${NC}"
+        cleanup_update
         exit 1
     fi
     
     # Check if it's a valid bash script
     if ! head -1 "$tmp_installer" | grep -q '^#!/bin/bash'; then
         echo "${RED}Invalid script downloaded. Update failed.${NC}"
+        cleanup_update
         exit 1
     fi
     
     # Extract the MAINSCRIPT content from the installer
-    local tmp_script
-    tmp_script=$(mktemp)
-    
     # Extract content between 'cat > "$INSTALL_DIR/$BACKUP_CMD" << '\''MAINSCRIPT'\''' and 'MAINSCRIPT'
     sed -n "/^cat > \"\\\$INSTALL_DIR\/\\\$BACKUP_CMD\" << 'MAINSCRIPT'$/,/^MAINSCRIPT$/p" "$tmp_installer" | \
         sed '1d;$d' > "$tmp_script"
@@ -1021,14 +1047,14 @@ do_update() {
     # Verify extraction
     if [[ ! -s "$tmp_script" ]]; then
         echo "${RED}Failed to extract script. Update failed.${NC}"
-        rm -f "$tmp_script"
+        cleanup_update
         exit 1
     fi
     
     # Check extracted script is valid
     if ! head -1 "$tmp_script" | grep -q '^#!/bin/bash'; then
         echo "${RED}Invalid script extracted. Update failed.${NC}"
-        rm -f "$tmp_script"
+        cleanup_update
         exit 1
     fi
     
@@ -1046,7 +1072,7 @@ do_update() {
         chmod +x "$script_path"
     fi
     
-    rm -f "$tmp_script"
+    cleanup_update
     
     echo "${GREEN}✓ Updated to v$latest_version successfully!${NC}"
     echo "Run ${BLUE}snapback version${NC} to verify."
