@@ -809,17 +809,26 @@ do_configure() {
         
         # Multiple databases
         echo ""
-        echo -e "${YELLOW}Enter database names to backup (comma-separated, or single name):${NC}"
-        echo -e "  Example: ${CYAN}mydb${NC} or ${CYAN}db1,db2,db3${NC}"
+        echo -e "${YELLOW}Enter database names to backup:${NC}"
+        echo -e "  ${CYAN}*${NC}           - ALL databases (auto-discover)"
+        echo -e "  ${CYAN}mydb${NC}        - Single database"
+        echo -e "  ${CYAN}db1,db2,db3${NC} - Multiple databases"
         local default_dbs="${DB_MULTIPLE:-${DB_NAME:-}}"
+        [[ "$default_dbs" == "" ]] && default_dbs="*"
         read -p "Databases [$default_dbs]: " input_dbs
         input_dbs="${input_dbs:-$default_dbs}"
         
         # Parse databases
-        if [[ "$input_dbs" == *","* ]]; then
+        if [[ "$input_dbs" == "*" ]]; then
+            # All databases mode
+            DB_MULTIPLE="*"
+            DB_NAME=""
+        elif [[ "$input_dbs" == *","* ]]; then
+            # Multiple specific databases
             DB_MULTIPLE="$input_dbs"
             DB_NAME=$(echo "$input_dbs" | cut -d',' -f1 | xargs)
         else
+            # Single database
             DB_NAME="$input_dbs"
             DB_MULTIPLE=""
         fi
