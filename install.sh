@@ -772,7 +772,7 @@ do_configure() {
 # =============================================================================
 
 # rclone Remote Name (run: snapback setup-rclone)
-RCLONE_REMOTE="${RCLONE_REMOTE:-s3backup}"
+RCLONE_REMOTE="$RCLONE_REMOTE"
 
 # S3 Bucket & Path
 S3_BUCKET="$S3_BUCKET"
