@@ -228,13 +228,34 @@ upload() {
     fi
 }
 
+# Get all databases (excluding system databases)
+_get_all_databases() {
+    case "$DB_DRIVER" in
+        mysql|mariadb)
+            mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASSWORD" -N -e "SHOW DATABASES" 2>/dev/null | \
+                grep -Ev "^(information_schema|performance_schema|mysql|sys)$"
+            ;;
+        postgresql|postgres)
+            PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -t -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres')" 2>/dev/null | \
+                sed 's/^[[:space:]]*//' | grep -v '^$'
+            ;;
+    esac
+}
+
 # Dump databases to a folder (internal helper)
 _dump_databases() {
     local dest_dir="$1"
     mkdir -p "$dest_dir"
     
     local dbs=()
-    if [[ -n "$DB_MULTIPLE" ]]; then
+    if [[ "$DB_MULTIPLE" == "*" ]]; then
+        # Backup ALL databases
+        log "Discovering all databases..."
+        while IFS= read -r db; do
+            [[ -n "$db" ]] && dbs+=("$db")
+        done < <(_get_all_databases)
+        log "Found ${#dbs[@]} databases: ${dbs[*]}"
+    elif [[ -n "$DB_MULTIPLE" ]]; then
         IFS=',' read -ra dbs <<< "$DB_MULTIPLE"
     else
         dbs=("$DB_NAME")
