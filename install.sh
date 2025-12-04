@@ -957,7 +957,7 @@ do_update() {
     
     if [[ -z "$latest_version" ]]; then
         # Fallback: try to get version from raw file
-        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" | grep -m1 'VERSION=' | cut -d'"' -f2)
+        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" | grep -m1 '^VERSION=' | cut -d'"' -f2)
     fi
     
     if [[ -z "$latest_version" ]]; then
@@ -980,28 +980,47 @@ do_update() {
     
     echo "${BLUE}Downloading latest version...${NC}"
     
-    local tmp_script
-    tmp_script=$(mktemp)
-    trap "rm -f $tmp_script" EXIT
+    local tmp_installer
+    tmp_installer=$(mktemp)
+    trap "rm -f $tmp_installer" EXIT
     
-    # Download from GitHub releases or raw
-    if ! curl -sL "https://github.com/$GITHUB_REPO/releases/latest/download/snapback" -o "$tmp_script" 2>/dev/null; then
-        # Fallback to raw main branch
-        curl -sL "$GITHUB_RAW/main/install.sh" -o "$tmp_script" || {
-            echo "${RED}Failed to download update.${NC}"
-            exit 1
-        }
-    fi
+    # Download installer from GitHub
+    curl -sL "$GITHUB_RAW/main/install.sh" -o "$tmp_installer" || {
+        echo "${RED}Failed to download update.${NC}"
+        exit 1
+    }
     
     # Verify download
-    if [[ ! -s "$tmp_script" ]]; then
+    if [[ ! -s "$tmp_installer" ]]; then
         echo "${RED}Downloaded file is empty. Update failed.${NC}"
         exit 1
     fi
     
     # Check if it's a valid bash script
-    if ! head -1 "$tmp_script" | grep -q '^#!/bin/bash'; then
+    if ! head -1 "$tmp_installer" | grep -q '^#!/bin/bash'; then
         echo "${RED}Invalid script downloaded. Update failed.${NC}"
+        exit 1
+    fi
+    
+    # Extract the MAINSCRIPT content from the installer
+    local tmp_script
+    tmp_script=$(mktemp)
+    
+    # Extract content between 'cat > "$INSTALL_DIR/$BACKUP_CMD" << '\''MAINSCRIPT'\''' and 'MAINSCRIPT'
+    sed -n "/^cat > \"\\\$INSTALL_DIR\/\\\$BACKUP_CMD\" << 'MAINSCRIPT'$/,/^MAINSCRIPT$/p" "$tmp_installer" | \
+        sed '1d;$d' > "$tmp_script"
+    
+    # Verify extraction
+    if [[ ! -s "$tmp_script" ]]; then
+        echo "${RED}Failed to extract script. Update failed.${NC}"
+        rm -f "$tmp_script"
+        exit 1
+    fi
+    
+    # Check extracted script is valid
+    if ! head -1 "$tmp_script" | grep -q '^#!/bin/bash'; then
+        echo "${RED}Invalid script extracted. Update failed.${NC}"
+        rm -f "$tmp_script"
         exit 1
     fi
     
@@ -1009,7 +1028,7 @@ do_update() {
     local script_path
     script_path=$(realpath "$0")
     
-    # Check write permission
+    # Check write permission and update
     if [[ ! -w "$script_path" ]]; then
         echo "${YELLOW}Root permission required to update $script_path${NC}"
         sudo cp "$tmp_script" "$script_path"
@@ -1018,6 +1037,8 @@ do_update() {
         cp "$tmp_script" "$script_path"
         chmod +x "$script_path"
     fi
+    
+    rm -f "$tmp_script"
     
     echo "${GREEN}✓ Updated to v$latest_version successfully!${NC}"
     echo "Run ${BLUE}snapback version${NC} to verify."
@@ -1029,7 +1050,7 @@ do_check_update() {
     latest_version=$(curl -sL "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' | sed 's/^v//')
     
     if [[ -z "$latest_version" ]]; then
-        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" 2>/dev/null | grep -m1 'VERSION=' | cut -d'"' -f2)
+        latest_version=$(curl -sL "$GITHUB_RAW/main/install.sh" 2>/dev/null | grep -m1 '^VERSION=' | cut -d'"' -f2)
     fi
     
     if [[ -n "$latest_version" && "$VERSION" != "$latest_version" ]]; then
