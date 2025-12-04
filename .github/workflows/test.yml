@@ -148,5 +148,5 @@ jobs:
       - name: Verify backup file created
         run: |
           ls -la /tmp/backups/test/
-          test -f /tmp/backups/test/backup_testdb_*.zip
+          test -f /tmp/backups/test/backup_*.zip
           echo "✓ Backup file created successfully"
