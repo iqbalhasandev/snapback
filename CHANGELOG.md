@@ -2,6 +2,14 @@
 
 All notable changes to Snapback will be documented in this file.
 
+## v1.0.2 - 2025-12-06
+
+### What changes we made
+
+- [Bump version to 1.0.2 and update version display formatting in installer](https://github.com/iqbalhasandev/snapback/commit/03756a92bddb3342b5122edc9341864282989495)
+
+**Full Changelog**: https://github.com/iqbalhasandev/snapback/compare/v1.0.1...v1.0.2
+
 ## v1.0.1 - 2025-12-06
 
 ### What changes we made
