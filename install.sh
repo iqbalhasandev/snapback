@@ -7,7 +7,7 @@
 
 set -e
 
-VERSION="1.0.0"
+VERSION="1.0.2"
 GITHUB_REPO="iqbalhasandev/snapback"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -18,7 +18,7 @@ BACKUP_CMD="snapback"
 
 echo -e "${CYAN}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║           Snapback v${VERSION} - Backup Tool Installer              ║"
+echo "║          Snapback v${VERSION} - Backup Tool Installer              ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -36,10 +36,10 @@ echo -e "${GREEN}[1/4]${NC} Installing backup script..."
 # Create main backup script
 cat > "$INSTALL_DIR/$BACKUP_CMD" << 'MAINSCRIPT'
 #!/bin/bash
-# Snapback v1.0.0 - Database & Files Backup Tool
+# Snapback v1.0.2 - Database & Files Backup Tool
 set -eo pipefail
 
-VERSION="1.0.0"
+VERSION="1.0.2"
 GITHUB_REPO="iqbalhasandev/snapback"
 GITHUB_RAW="https://raw.githubusercontent.com/$GITHUB_REPO"
 LOCKFILE="/tmp/snapback.lock"
